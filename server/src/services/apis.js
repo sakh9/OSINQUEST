@@ -1,40 +1,52 @@
 const dns = require('dns').promises;
 
-// IP Geolocation (ip-api.com - Free, no key)
+// IP Geolocation
 const getGeo = async (ip) => {
   const res = await fetch(`http://ip-api.com/json/${ip}?fields=status,message,country,regionName,city,lat,lon,isp,org,as`);
   return res.json();
 };
 
-// Shodan InternetDB (Free, no key, returns open ports & vulns)
+// Shodan InternetDB
 const getShodan = async (ip) => {
   const res = await fetch(`https://internetdb.shodan.io/${ip}`);
   if (!res.ok) return { ports: [], vulns: [], hostnames: [] };
   return res.json();
 };
 
-// RDAP for WHOIS data (Modern JSON standard, no key)
+// RDAP WHOIS for Domains (with redirect handling)
 const getWhois = async (domain) => {
-  const res = await fetch(`https://rdap.org/domain/${domain}`);
-  if (!res.ok) throw new Error('RDAP lookup failed');
-  return res.json();
+  try {
+    const res = await fetch(`https://rdap.org/domain/${domain}`, { redirect: 'follow' });
+    if (!res.ok) return { registrar: 'Unknown', handle: domain };
+    const data = await res.json();
+    return {
+      ldhName: data.ldhName || domain,
+      handle: data.handle || 'N/A',
+      status: data.status || [],
+      events: data.events || []
+    };
+  } catch (err) {
+    return { ldhName: domain, status: ['Lookup failed'] };
+  }
 };
 
-// Native DNS resolution
+// DNS Records
 const getDns = async (domain) => {
   try {
-    const [a, mx, txt] = await Promise.allSettled([
+    const [a, mx, txt, ns] = await Promise.allSettled([
       dns.resolve4(domain),
       dns.resolveMx(domain),
-      dns.resolveTxt(domain)
+      dns.resolveTxt(domain),
+      dns.resolveNs(domain)
     ]);
     return {
       A: a.status === 'fulfilled' ? a.value : [],
-      MX: mx.status === 'fulfilled' ? mx.value : [],
-      TXT: txt.status === 'fulfilled' ? txt.value.flat() : []
+      MX: mx.status === 'fulfilled' ? mx.value.map(m => `${m.priority} ${m.exchange}`) : [],
+      TXT: txt.status === 'fulfilled' ? txt.value.flat() : [],
+      NS: ns.status === 'fulfilled' ? ns.value : []
     };
   } catch (err) {
-    return {};
+    return { A: [], MX: [], TXT: [], NS: [] };
   }
 };
 
