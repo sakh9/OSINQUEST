@@ -1,53 +1,123 @@
 const dns = require('dns').promises;
+const { isIp } = require('../utils/validate');
+
+const DEFAULT_TIMEOUT_MS = 8000;
+
+// Every one of these calls hits a free third-party API with no SLA. Without
+// a timeout, one slow/hung response holds the whole lookup request open
+// until Render's platform-level timeout kills it (or the browser gives up).
+// AbortController lets us fail fast and report *why* instead of just hanging.
+async function fetchWithTimeout(url, options = {}, timeoutMs = DEFAULT_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } catch (err) {
+    if (err.name === 'AbortError') {
+      throw new Error(`Request to ${new URL(url).hostname} timed out after ${timeoutMs}ms`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 // IP Geolocation
 const getGeo = async (ip) => {
-  const res = await fetch(`http://ip-api.com/json/${ip}?fields=status,message,country,regionName,city,lat,lon,isp,org,as`);
-  return res.json();
+  const res = await fetchWithTimeout(
+    `http://ip-api.com/json/${ip}?fields=status,message,country,countryCode,regionName,city,zip,lat,lon,timezone,isp,org,as,query`
+  );
+  if (!res.ok) {
+    throw new Error(`ip-api.com responded with status ${res.status}`);
+  }
+  const data = await res.json();
+  // ip-api.com returns HTTP 200 even on failure - the real signal is
+  // data.status. The original code never checked this, so a bad/reserved
+  // IP would silently return {status:"fail", message:"..."} as if it worked.
+  if (data.status === 'fail') {
+    throw new Error(data.message || 'Geolocation lookup failed');
+  }
+  return data;
 };
 
 // Shodan InternetDB
 const getShodan = async (ip) => {
-  const res = await fetch(`https://internetdb.shodan.io/${ip}`);
-  if (!res.ok) return { ports: [], vulns: [], hostnames: [] };
+  const res = await fetchWithTimeout(`https://internetdb.shodan.io/${ip}`);
+  if (res.status === 404) {
+    // Not an error - InternetDB just has nothing on file for this host.
+    // Worth distinguishing from a real failure (5xx/timeout) below.
+    return { ip, ports: [], vulns: [], hostnames: [], note: 'No data on file for this host' };
+  }
+  if (!res.ok) {
+    throw new Error(`Shodan InternetDB responded with status ${res.status}`);
+  }
   return res.json();
 };
 
-// RDAP WHOIS for Domains (with redirect handling)
-const getWhois = async (domain) => {
-  try {
-    const res = await fetch(`https://rdap.org/domain/${domain}`, { redirect: 'follow' });
-    if (!res.ok) return { registrar: 'Unknown', handle: domain };
-    const data = await res.json();
-    return {
-      ldhName: data.ldhName || domain,
-      handle: data.handle || 'N/A',
-      status: data.status || [],
-      events: data.events || []
-    };
-  } catch (err) {
-    return { ldhName: domain, status: ['Lookup failed'] };
+// RDAP WHOIS - now handles both domains and IPs, and no longer swallows
+// real failures. Previously this only ever queried /domain/{value}, so
+// every IP lookup silently got back {registrar:'Unknown'} instead of
+// actual RDAP network/allocation data. Errors are now thrown instead of
+// caught-and-faked, so the router's error handling (unwrap in lookup.js)
+// can report the real reason to the frontend.
+const getWhois = async (query) => {
+  const url = isIp(query) ? `https://rdap.org/ip/${query}` : `https://rdap.org/domain/${query}`;
+
+  const res = await fetchWithTimeout(url, { redirect: 'follow' });
+
+  if (res.status === 404) {
+    return { status: ['No RDAP record found'], handle: query };
   }
+  if (!res.ok) {
+    throw new Error(`RDAP lookup responded with status ${res.status}`);
+  }
+
+  const data = await res.json();
+
+  // Domain RDAP responses use `ldhName`; IP/network RDAP responses use
+  // `name` + `startAddress`/`endAddress`/`country` instead. Normalizing
+  // both shapes here means the frontend never has to branch on query type.
+  return {
+    name: data.ldhName || data.name || query,
+    handle: data.handle || 'N/A',
+    startAddress: data.startAddress || null,
+    endAddress: data.endAddress || null,
+    country: data.country || null,
+    status: data.status || [],
+    events: (data.events || []).map((e) => ({ action: e.eventAction, date: e.eventDate })),
+    nameservers: (data.nameservers || []).map((ns) => ns.ldhName).filter(Boolean),
+  };
 };
 
-// DNS Records
+// DNS Records - added AAAA/CNAME for parity with what a real DNS toolkit
+// shows, and now throws if literally nothing resolved (likely means the
+// domain doesn't exist) rather than returning an all-empty object that's
+// indistinguishable from "this domain just has no MX record," which is normal.
 const getDns = async (domain) => {
-  try {
-    const [a, mx, txt, ns] = await Promise.allSettled([
-      dns.resolve4(domain),
-      dns.resolveMx(domain),
-      dns.resolveTxt(domain),
-      dns.resolveNs(domain)
-    ]);
-    return {
-      A: a.status === 'fulfilled' ? a.value : [],
-      MX: mx.status === 'fulfilled' ? mx.value.map(m => `${m.priority} ${m.exchange}`) : [],
-      TXT: txt.status === 'fulfilled' ? txt.value.flat() : [],
-      NS: ns.status === 'fulfilled' ? ns.value : []
-    };
-  } catch (err) {
-    return { A: [], MX: [], TXT: [], NS: [] };
+  const [a, aaaa, mx, txt, ns, cname] = await Promise.allSettled([
+    dns.resolve4(domain),
+    dns.resolve6(domain),
+    dns.resolveMx(domain),
+    dns.resolveTxt(domain),
+    dns.resolveNs(domain),
+    dns.resolveCname(domain),
+  ]);
+
+  const record = {
+    A: a.status === 'fulfilled' ? a.value : [],
+    AAAA: aaaa.status === 'fulfilled' ? aaaa.value : [],
+    MX: mx.status === 'fulfilled' ? mx.value.map((m) => `${m.priority} ${m.exchange}`) : [],
+    TXT: txt.status === 'fulfilled' ? txt.value.flat() : [],
+    NS: ns.status === 'fulfilled' ? ns.value : [],
+    CNAME: cname.status === 'fulfilled' ? cname.value : [],
+  };
+
+  const hasAnyRecord = Object.values(record).some((arr) => arr.length > 0);
+  if (!hasAnyRecord) {
+    throw new Error('No DNS records found - domain may not exist or is not delegated');
   }
+
+  return record;
 };
 
 module.exports = { getGeo, getShodan, getWhois, getDns };
