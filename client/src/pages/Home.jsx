@@ -1,16 +1,11 @@
 import { useState, useRef } from 'react';
 import axios from 'axios';
-import { Search, ShieldAlert, Activity, MapPin, Globe, Server, AlertTriangle, Clock, CheckCircle2, Info } from 'lucide-react';
+import { Search, ShieldAlert, Activity, MapPin, Globe, Server, AlertTriangle, Clock, CheckCircle2, Info, Terminal, /*Cpu,*/ Database, Zap } from 'lucide-react';
 import MapView from '../components/MapView';
 import AbuseGauge from '../components/AbuseGauge';
 import ActivityChart from '../components/ActivityChart';
 import DnsRecordChart from '../components/DnsRecordChart';
 
-// Lightweight pre-flight check, purely for fast UX feedback before hitting
-// the network. This is intentionally loose - the server's classifyQuery()
-// is the authoritative validator (it also blocks private/reserved IPs,
-// which this client-side check deliberately does not attempt to replicate,
-// to avoid the two falling out of sync with each other over time).
 function looksLikeIpOrDomain(value) {
   const ipv4 = /^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/;
   const ipv6 = /^[0-9a-fA-F:]+:[0-9a-fA-F:]+$/;
@@ -18,24 +13,19 @@ function looksLikeIpOrDomain(value) {
   return ipv4.test(value) || ipv6.test(value) || domain.test(value);
 }
 
-// Small status banner shown inside a card when its data source errored out,
-// was skipped, or genuinely came back empty - previously these three very
-// different situations all just rendered as blank/empty, which reads as
-// "nothing found" even when the real story is "this API failed" or
-// "this domain never resolved to an IP so we couldn't check."
 function SourceStatus({ error, skipped, reason }) {
   if (error) {
     return (
-      <div className="flex items-center gap-2 text-amber-400 text-sm bg-amber-900/10 border border-amber-900/40 rounded p-2">
-        <AlertTriangle size={14} className="shrink-0" />
+      <div className="flex items-center gap-2 text-amber-400 text-xs bg-amber-950/20 border border-amber-900/40 rounded-lg p-3 font-sans">
+        <AlertTriangle size={15} className="shrink-0 text-amber-400" />
         <span>{error}</span>
       </div>
     );
   }
   if (skipped) {
     return (
-      <div className="flex items-center gap-2 text-slate-500 text-sm bg-slate-800/40 rounded p-2">
-        <Clock size={14} className="shrink-0" />
+      <div className="flex items-center gap-2 text-slate-400 text-xs bg-slate-900/60 border border-slate-800 rounded-lg p-3 font-sans">
+        <Clock size={15} className="shrink-0 text-slate-500" />
         <span>{reason || 'Skipped'}</span>
       </div>
     );
@@ -43,19 +33,7 @@ function SourceStatus({ error, skipped, reason }) {
   return null;
 }
 
-// Note: the old text badge (color + "High/Moderate/Low risk" label) that
-// used to live in the Abuse Reputation card is now the AbuseGauge chart
-// instead - the 25/75 thresholds live in AbuseGauge's gaugeColor() so
-// there's one source of truth instead of two functions that could drift
-// out of sync with each other.
-
-// Synthesizes the raw geo/shodan/abuse fields into one or two plain-English
-// sentences, instead of leaving the person to read five separate cards and
-// draw their own conclusion. This is the project's actual differentiator -
-// most OSINT aggregators dump raw data and stop there; this interprets it.
-// Returns null if there's nothing meaningful to say yet (e.g. every source
-// errored or was skipped).
-function buildRiskSummary({ geo, shodan, /* whois, */ abuse, type }) {
+function buildRiskSummary({ geo, shodan, abuse, type }) {
   const parts = [];
   const subject = type === 'domain' ? 'This domain' : 'This IP';
   let severity = 'info';
@@ -112,10 +90,10 @@ function buildRiskSummary({ geo, shodan, /* whois, */ abuse, type }) {
 }
 
 const SUMMARY_STYLES = {
-  good: { className: 'border-emerald-900 bg-emerald-900/10 text-emerald-300', Icon: CheckCircle2 },
-  warn: { className: 'border-amber-900 bg-amber-900/10 text-amber-300', Icon: AlertTriangle },
-  danger: { className: 'border-red-900 bg-red-900/10 text-red-300', Icon: ShieldAlert },
-  info: { className: 'border-slate-700 bg-slate-800/40 text-slate-300', Icon: Info },
+  good: { className: 'border-emerald-500/30 bg-emerald-950/20 text-emerald-300 shadow-[0_0_15px_rgba(16,185,129,0.08)]', Icon: CheckCircle2 },
+  warn: { className: 'border-amber-500/30 bg-amber-950/20 text-amber-300 shadow-[0_0_15px_rgba(245,158,11,0.08)]', Icon: AlertTriangle },
+  danger: { className: 'border-rose-500/30 bg-rose-950/20 text-rose-300 shadow-[0_0_15px_rgba(244,63,94,0.08)]', Icon: ShieldAlert },
+  info: { className: 'border-cyan-500/30 bg-cyan-950/20 text-cyan-300 shadow-[0_0_15px_rgba(6,182,212,0.08)]', Icon: Info },
 };
 
 export default function Home() {
@@ -127,7 +105,7 @@ export default function Home() {
 
   const handleSearch = async (e) => {
     e.preventDefault();
-    if (loading) return; // guards against double-submit via rapid Enter presses
+    if (loading) return;
 
     const trimmedInput = input.trim();
     if (!trimmedInput) {
@@ -137,23 +115,16 @@ export default function Home() {
       return setError('That doesn\u2019t look like a valid IP address or domain name.');
     }
 
-    // Cancel any still-in-flight previous request. Without this, firing a
-    // second search before the first resolves creates a race where an
-    // older, slower response can land after the newer one and silently
-    // overwrite it with stale data.
     if (abortRef.current) abortRef.current.abort();
     const controller = new AbortController();
     abortRef.current = controller;
 
     setError('');
-    setData(null); // clear stale results so a failed new search doesn't show old data next to the error
+    setData(null);
     setLoading(true);
 
     try {
       const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:5000';
-      // 30s timeout: free-tier hosts like Render spin down when idle and
-      // can take up to ~60s to wake on the first request. This is generous
-      // on purpose rather than failing a legitimate cold start early.
       const response = await axios.post(
         `${apiUrl}/api/lookup`,
         { query: trimmedInput },
@@ -161,7 +132,7 @@ export default function Home() {
       );
       setData(response.data);
     } catch (err) {
-      if (axios.isCancel(err) || err.code === 'ERR_CANCELED') return; // superseded by a newer search, not a real error
+      if (axios.isCancel(err) || err.code === 'ERR_CANCELED') return;
       console.error('API Error:', err);
       if (err.code === 'ECONNABORTED') {
         setError('The request timed out. The server may be waking up from idle - please try again.');
@@ -183,153 +154,195 @@ export default function Home() {
   const summaryStyle = riskSummary ? SUMMARY_STYLES[riskSummary.severity] : null;
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-200 p-8 font-mono">
-      <div className="max-w-5xl mx-auto">
-        <header className="mb-10 text-center">
-          <h1 className="text-4xl font-bold text-emerald-400 mb-2 flex items-center justify-center gap-3">
-            <ShieldAlert size={36} /> OSINT Nexus
-          </h1>
-          <p className="text-slate-400">IP & Domain Intelligence Aggregator</p>
+    <div className="min-h-screen bg-[#050811] text-slate-200 p-4 sm:p-8 font-mono selection:bg-cyan-500/30 selection:text-cyan-200">
+      <div className="max-w-6xl mx-auto space-y-8">
+        
+        {/* Command Center Header */}
+        <header className="flex flex-col sm:flex-row items-center justify-between border-b border-slate-800/80 pb-6 gap-4">
+          <div className="flex items-center gap-3">
+            <div className="p-3 rounded-xl bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 shadow-[0_0_20px_rgba(6,182,212,0.15)]">
+              <ShieldAlert size={28} />
+            </div>
+            <div>
+              <h1 className="text-2xl sm:text-3xl font-black text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 via-teal-300 to-emerald-400 tracking-wider">
+                OSINT NEXUS
+              </h1>
+              <p className="text-xs text-slate-400 font-sans">Threat Intelligence & Recon Operations</p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 text-xs font-sans text-slate-400 bg-slate-900/80 border border-slate-800 px-3 py-1.5 rounded-full">
+            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+            <span>SYSTEM ACTIVE</span>
+          </div>
         </header>
 
-        <ActivityChart />
+        {/* Global Activity Analytics Section */}
+        <div className="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-4 sm:p-6 backdrop-blur-md">
+          <ActivityChart />
+        </div>
 
-        <form onSubmit={handleSearch} className="flex gap-4 mb-8">
-          <input
-            type="text"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            placeholder="Enter IP (e.g. 8.8.8.8) or Domain (e.g. github.com)"
-            aria-label="IP address or domain to look up"
-            className="flex-1 bg-slate-900 border border-slate-700 rounded p-4 text-lg focus:border-emerald-500 focus:outline-none"
-          />
-          <button
-            type="submit"
-            disabled={loading}
-            aria-label={loading ? 'Searching' : 'Search'}
-            className="bg-emerald-600 hover:bg-emerald-500 text-white px-8 py-4 rounded font-bold transition-colors disabled:opacity-50 cursor-pointer"
-          >
-            {loading ? <Activity className="animate-spin" /> : <Search />}
-          </button>
-        </form>
+        {/* Tactical Search Form */}
+        <div className="relative max-w-3xl mx-auto">
+          <form onSubmit={handleSearch} className="relative flex items-center">
+            <div className="absolute left-4 text-cyan-500/70">
+              <Terminal size={18} />
+            </div>
+            <input
+              type="text"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              placeholder="Enter IP (e.g. 8.8.8.8) or Domain (e.g. github.com)"
+              aria-label="IP address or domain to look up"
+              className="w-full bg-slate-900/90 border border-slate-800 rounded-2xl pl-11 pr-32 py-4 text-base sm:text-lg text-slate-100 placeholder:text-slate-600 focus:border-cyan-500/60 focus:outline-none focus:ring-4 focus:ring-cyan-500/10 transition-all shadow-xl"
+            />
+            <button
+              type="submit"
+              disabled={loading}
+              aria-label={loading ? 'Searching' : 'Search'}
+              className="absolute right-2 bg-gradient-to-r from-cyan-500 to-teal-500 hover:from-cyan-400 hover:to-teal-400 text-slate-950 font-bold px-6 py-2.5 rounded-xl transition-all disabled:opacity-50 cursor-pointer flex items-center gap-2 shadow-[0_0_15px_rgba(6,182,212,0.3)] hover:shadow-[0_0_20px_rgba(6,182,212,0.5)]"
+            >
+              {loading ? (
+                <Activity className="animate-spin text-slate-950" size={18} />
+              ) : (
+                <>
+                  <Search size={18} />
+                  <span className="hidden sm:inline font-sans text-xs tracking-wider uppercase font-extrabold">Scan</span>
+                </>
+              )}
+            </button>
+          </form>
+        </div>
 
         {loading && (
-          <div className="text-slate-500 text-sm mb-6 text-center">
-            Querying geolocation, WHOIS, DNS, and reputation sources — this can take a few seconds
-            (or up to a minute if the server is waking up from idle).
+          <div className="flex items-center justify-center gap-2 text-slate-400 text-xs sm:text-sm font-sans bg-slate-900/40 border border-slate-800 rounded-xl p-4 max-w-2xl mx-auto">
+            <Activity className="animate-spin text-cyan-400 shrink-0" size={16} />
+            <span>Querying geolocation, WHOIS, DNS, and reputation sources...</span>
           </div>
         )}
 
         {error && (
-          <div className="text-red-400 bg-red-900/20 p-4 border border-red-900 rounded mb-8">{error}</div>
+          <div className="text-rose-400 bg-rose-950/20 border border-rose-900/50 rounded-xl p-4 text-sm max-w-2xl mx-auto flex items-center gap-3 backdrop-blur-sm">
+            <AlertTriangle className="shrink-0 text-rose-400" size={18} />
+            <span className="font-sans">{error}</span>
+          </div>
         )}
 
+        {/* Search Results Display */}
         {data && !loading && (
-          <>
-            <div className="flex items-center justify-between mb-4 text-sm text-slate-500">
-              <span>
-                Results for <span className="text-slate-300">{data.query}</span>
-                <span className="ml-2 uppercase text-xs border border-slate-700 rounded px-2 py-0.5">{data.query_type}</span>
-              </span>
+          <div className="space-y-6">
+            
+            {/* Intel Target Banner */}
+            <div className="flex flex-wrap items-center justify-between gap-3 text-xs border-b border-slate-800/80 pb-3 font-sans">
+              <div className="flex items-center gap-2">
+                <span className="text-slate-500">TARGET:</span>
+                <span className="text-slate-100 font-mono font-bold text-sm bg-slate-900 px-2 py-0.5 rounded border border-slate-800">{data.query}</span>
+                <span className="uppercase bg-cyan-950/50 text-cyan-300 border border-cyan-800/50 rounded px-2 py-0.5 text-[10px] font-bold tracking-widest">
+                  {data.query_type}
+                </span>
+              </div>
               {data.cached && (
-                <span className="text-xs border border-slate-700 rounded px-2 py-0.5">from cache</span>
+                <div className="flex items-center gap-1.5 text-slate-400 bg-slate-900 border border-slate-800 px-2.5 py-1 rounded-full text-[11px]">
+                  <Database size={12} className="text-teal-400" />
+                  <span>Cached Result</span>
+                </div>
               )}
             </div>
 
-            {riskSummary && (
-              <div className={`flex items-start gap-3 p-4 border rounded mb-6 text-sm leading-relaxed ${summaryStyle.className}`}>
-                <summaryStyle.Icon size={18} className="shrink-0 mt-0.5" />
-                <p>{riskSummary.text}</p>
+            {/* Synthesized Risk Summary Banner */}
+            {riskSummary && summaryStyle && (
+              <div className={`flex items-start gap-3 p-4 border rounded-2xl text-sm leading-relaxed backdrop-blur-md ${summaryStyle.className}`}>
+                <summaryStyle.Icon size={20} className="shrink-0 mt-0.5" />
+                <p className="font-sans text-slate-200">{riskSummary.text}</p>
               </div>
             )}
 
+            {/* Bento Grid layout */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              
               {/* Geolocation Card */}
               {geo && (
-                <div className="bg-slate-900 border border-slate-800 p-6 rounded">
-                  <h2 className="text-xl text-emerald-400 border-b border-slate-800 pb-2 mb-4 flex items-center gap-2">
-                    <MapPin /> Geolocation
-                  </h2>
-                  {(geo.error || geo.skipped) ? (
-                    <SourceStatus error={geo.error} skipped={geo.skipped} reason={geo.reason} />
-                  ) : (
-                    <>
-                      <ul className="space-y-2 mb-4">
-                        <li><span className="text-slate-500">ISP:</span> {geo.isp || 'Unknown'}</li>
-                        <li><span className="text-slate-500">Org:</span> {geo.org || 'Unknown'}</li>
-                        <li><span className="text-slate-500">Location:</span> {geo.city || 'Unknown'}, {geo.country || 'Unknown'}</li>
+                <div className="bg-slate-900/40 border border-slate-800/80 p-6 rounded-2xl backdrop-blur-md shadow-xl flex flex-col justify-between">
+                  <div>
+                    <h2 className="text-lg font-bold text-cyan-400 border-b border-slate-800/80 pb-3 mb-4 flex items-center gap-2">
+                      <MapPin size={18} /> Geolocation Profile
+                    </h2>
+                    {(geo.error || geo.skipped) ? (
+                      <SourceStatus error={geo.error} skipped={geo.skipped} reason={geo.reason} />
+                    ) : (
+                      <ul className="space-y-2.5 text-sm mb-4">
+                        <li className="flex justify-between border-b border-slate-800/40 pb-1.5"><span className="text-slate-500">ISP</span> <span className="text-slate-200">{geo.isp || 'Unknown'}</span></li>
+                        <li className="flex justify-between border-b border-slate-800/40 pb-1.5"><span className="text-slate-500">Organization</span> <span className="text-slate-200">{geo.org || 'Unknown'}</span></li>
+                        <li className="flex justify-between border-b border-slate-800/40 pb-1.5"><span className="text-slate-500">Location</span> <span className="text-slate-200">{geo.city || 'Unknown'}, {geo.country || 'Unknown'}</span></li>
                         {geo.resolvedIp && (
-                          <li><span className="text-slate-500">Resolved IP:</span> {geo.resolvedIp}</li>
+                          <li className="flex justify-between border-b border-slate-800/40 pb-1.5"><span className="text-slate-500">Resolved IP</span> <span className="text-cyan-300">{geo.resolvedIp}</span></li>
                         )}
                       </ul>
-                      {Number.isFinite(Number(geo.lat)) && Number.isFinite(Number(geo.lon)) && (
-                        // Passing raw lat/lon straight through - MapView itself decides
-                        // whether (0,0) means "unknown location" vs. a real coordinate
-                        // that happens to sit on the equator/meridian.
-                        <MapView lat={geo.lat} lon={geo.lon} city={geo.city} country={geo.country} isp={geo.isp} />
-                      )}
-                    </>
+                    )}
+                  </div>
+                  {!geo.error && !geo.skipped && Number.isFinite(Number(geo.lat)) && Number.isFinite(Number(geo.lon)) && (
+                    <div className="mt-2 rounded-xl overflow-hidden border border-slate-800 shadow-inner">
+                      <MapView lat={geo.lat} lon={geo.lon} city={geo.city} country={geo.country} isp={geo.isp} />
+                    </div>
                   )}
                 </div>
               )}
 
               {/* Open Ports Card */}
               {shodan && (
-                <div className="bg-slate-900 border border-slate-800 p-6 rounded">
-                  <h2 className="text-xl text-emerald-400 border-b border-slate-800 pb-2 mb-4 flex items-center gap-2">
-                    <Server /> Open Ports & Services
+                <div className="bg-slate-900/40 border border-slate-800/80 p-6 rounded-2xl backdrop-blur-md shadow-xl">
+                  <h2 className="text-lg font-bold text-cyan-400 border-b border-slate-800/80 pb-3 mb-4 flex items-center gap-2">
+                    <Server size={18} /> Attack Surface & Open Ports
                   </h2>
                   {(shodan.error || shodan.skipped) ? (
                     <SourceStatus error={shodan.error} skipped={shodan.skipped} reason={shodan.reason} />
                   ) : (
-                    <div className="flex flex-wrap gap-2">
+                    <div className="flex flex-wrap gap-2 pt-1">
                       {shodan.ports?.map((port) => (
-                        <span key={port} className="bg-slate-800 text-slate-200 px-3 py-1 rounded text-sm border border-slate-700">
-                          Port {port}
+                        <span key={port} className="bg-slate-800/80 hover:bg-slate-800 text-cyan-300 font-bold px-3 py-1.5 rounded-lg text-xs border border-cyan-500/30 shadow-sm transition-all">
+                          PORT {port}
                         </span>
                       ))}
                       {(!shodan.ports || shodan.ports.length === 0) && (
-                        <span className="text-slate-500">No open ports detected.</span>
+                        <span className="text-slate-500 text-sm font-sans italic">No exposed services or open ports detected.</span>
                       )}
                     </div>
                   )}
                 </div>
               )}
 
-              {/* WHOIS Card */}
+              {/* WHOIS / RDAP Card */}
               {whois && (
-                <div className="bg-slate-900 border border-slate-800 p-6 rounded">
-                  <h2 className="text-xl text-emerald-400 border-b border-slate-800 pb-2 mb-4 flex items-center gap-2">
-                    <Globe /> WHOIS / RDAP Info
+                <div className="bg-slate-900/40 border border-slate-800/80 p-6 rounded-2xl backdrop-blur-md shadow-xl">
+                  <h2 className="text-lg font-bold text-cyan-400 border-b border-slate-800/80 pb-3 mb-4 flex items-center gap-2">
+                    <Globe size={18} /> WHOIS / Registry Metadata
                   </h2>
                   {whois.error ? (
                     <SourceStatus error={whois.error} />
                   ) : (
-                    <ul className="space-y-2 text-sm">
-                      <li><span className="text-slate-500">Name:</span> {whois.name || 'Unknown'}</li>
-                      <li><span className="text-slate-500">Handle:</span> {whois.handle || 'N/A'}</li>
+                    <ul className="space-y-2.5 text-sm">
+                      <li className="flex justify-between border-b border-slate-800/40 pb-1.5"><span className="text-slate-500">Name</span> <span className="text-slate-200">{whois.name || 'Unknown'}</span></li>
+                      <li className="flex justify-between border-b border-slate-800/40 pb-1.5"><span className="text-slate-500">Handle ID</span> <span className="text-slate-200">{whois.handle || 'N/A'}</span></li>
                       {whois.country && (
-                        <li><span className="text-slate-500">Country:</span> {whois.country}</li>
+                        <li className="flex justify-between border-b border-slate-800/40 pb-1.5"><span className="text-slate-500">Country</span> <span className="text-slate-200">{whois.country}</span></li>
                       )}
                       {(whois.startAddress || whois.endAddress) && (
-                        <li>
-                          <span className="text-slate-500">Range:</span> {whois.startAddress} — {whois.endAddress}
-                        </li>
+                        <li className="flex justify-between border-b border-slate-800/40 pb-1.5"><span className="text-slate-500">Range</span> <span className="text-slate-200">{whois.startAddress} — {whois.endAddress}</span></li>
                       )}
-                      <li>
-                        <span className="text-slate-500">Status: </span>
-                        <span className="text-emerald-400">
+                      <li className="flex justify-between border-b border-slate-800/40 pb-1.5">
+                        <span className="text-slate-500">Status</span>
+                        <span className="text-teal-400 font-medium">
                           {Array.isArray(whois.status) && whois.status.length > 0
                             ? whois.status.slice(0, 3).join(', ')
                             : 'Unknown'}
                         </span>
                       </li>
                       {whois.nameservers?.length > 0 && (
-                        <li>
-                          <span className="text-slate-500 block mb-1">Nameservers:</span>
-                          <div className="flex flex-wrap gap-1">
+                        <li className="pt-2">
+                          <span className="text-slate-500 block mb-2 font-sans text-xs">Nameservers:</span>
+                          <div className="flex flex-wrap gap-1.5">
                             {whois.nameservers.map((ns) => (
-                              <span key={ns} className="bg-slate-800 px-2 py-0.5 rounded text-xs border border-slate-700">{ns}</span>
+                              <span key={ns} className="bg-slate-800/80 px-2.5 py-1 rounded-md text-xs border border-slate-700/60 text-slate-300">{ns}</span>
                             ))}
                           </div>
                         </li>
@@ -339,27 +352,27 @@ export default function Home() {
                 </div>
               )}
 
-              {/* DNS Card - handles both forward (domain) and reverse (IP) shapes */}
+              {/* DNS Card */}
               {dnsData && (
-                <div className="bg-slate-900 border border-slate-800 p-6 rounded">
-                  <h2 className="text-xl text-emerald-400 border-b border-slate-800 pb-2 mb-4 flex items-center gap-2">
-                    <Server /> DNS Records
+                <div className="bg-slate-900/40 border border-slate-800/80 p-6 rounded-2xl backdrop-blur-md shadow-xl">
+                  <h2 className="text-lg font-bold text-cyan-400 border-b border-slate-800/80 pb-3 mb-4 flex items-center gap-2">
+                    <Zap size={18} /> DNS Infrastructure
                   </h2>
                   {dnsData.error ? (
                     <SourceStatus error={dnsData.error} />
                   ) : isReverseDns ? (
                     <div className="text-sm">
-                      <strong className="text-slate-400 block mb-1">Reverse DNS (PTR):</strong>
-                      <div className="flex flex-wrap gap-1">
+                      <span className="text-slate-500 block mb-2 font-sans text-xs">Reverse DNS (PTR):</span>
+                      <div className="flex flex-wrap gap-1.5">
                         {dnsData.ptr.length > 0
                           ? dnsData.ptr.map((h) => (
-                              <span key={h} className="bg-slate-800 px-2 py-0.5 rounded text-xs border border-slate-700">{h}</span>
+                              <span key={h} className="bg-slate-800/80 text-cyan-300 px-2.5 py-1 rounded-md text-xs border border-slate-700/60">{h}</span>
                             ))
-                          : <span className="text-slate-500">No PTR record found.</span>}
+                          : <span className="text-slate-500 italic font-sans text-xs">No PTR record found.</span>}
                       </div>
                     </div>
                   ) : (
-                    <div className="space-y-3 text-sm">
+                    <div className="space-y-4 text-sm">
                       <DnsRecordChart dnsData={dnsData} />
                       {[
                         ['A Records (IPv4)', dnsData.A],
@@ -371,10 +384,10 @@ export default function Home() {
                       ].map(([label, values]) =>
                         values?.length > 0 ? (
                           <div key={label}>
-                            <strong className="text-slate-400 block mb-1">{label}:</strong>
-                            <div className="flex flex-wrap gap-1">
+                            <span className="text-slate-500 text-xs font-sans font-bold block mb-1.5 uppercase tracking-wider">{label}</span>
+                            <div className="flex flex-wrap gap-1.5">
                               {values.map((v) => (
-                                <span key={v} className="bg-slate-800 px-2 py-0.5 rounded text-xs border border-slate-700 break-all">{v}</span>
+                                <span key={v} className="bg-slate-800/80 text-slate-200 px-2.5 py-1 rounded-md text-xs border border-slate-700/60 break-all">{v}</span>
                               ))}
                             </div>
                           </div>
@@ -387,33 +400,51 @@ export default function Home() {
 
               {/* Abuse Reputation Card */}
               {abuse && (
-                <div className="bg-slate-900 border border-slate-800 p-6 rounded">
-                  <h2 className="text-xl text-emerald-400 border-b border-slate-800 pb-2 mb-4 flex items-center gap-2">
-                    <ShieldAlert /> Abuse Reputation
+                <div className="bg-slate-900/40 border border-slate-800/80 p-6 rounded-2xl backdrop-blur-md shadow-xl md:col-span-2">
+                  <h2 className="text-lg font-bold text-cyan-400 border-b border-slate-800/80 pb-3 mb-4 flex items-center gap-2">
+                    <ShieldAlert size={18} /> Abuse & Threat Confidence
                   </h2>
                   {(abuse.error || abuse.skipped) ? (
                     <SourceStatus error={abuse.error} skipped={abuse.skipped} reason={abuse.reason} />
                   ) : (
-                    <>
-                      <AbuseGauge score={abuse.abuseConfidenceScore ?? 0} />
-                      <ul className="space-y-2 text-sm mt-2">
-                        <li><span className="text-slate-500">Total reports:</span> {abuse.totalReports ?? 0}</li>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6 items-center">
+                      <div className="flex justify-center md:col-span-1 border-r-0 md:border-r border-slate-800/80 pr-0 md:pr-6">
+                        <AbuseGauge score={abuse.abuseConfidenceScore ?? 0} />
+                      </div>
+                      
+                      <div className="md:col-span-2 space-y-3 font-sans text-xs sm:text-sm">
+                        <div className="grid grid-cols-2 gap-3">
+                          <div className="bg-slate-800/30 border border-slate-800 p-3 rounded-xl">
+                            <span className="text-slate-500 block text-xs">Total Reports</span>
+                            <span className="text-slate-100 font-bold font-mono text-base">{abuse.totalReports ?? 0}</span>
+                          </div>
+                          <div className="bg-slate-800/30 border border-slate-800 p-3 rounded-xl">
+                            <span className="text-slate-500 block text-xs">Tor Exit Node</span>
+                            <span className="text-slate-100 font-bold font-mono text-base">{abuse.isTor ? 'Yes' : 'No'}</span>
+                          </div>
+                        </div>
+
                         {abuse.usageType && (
-                          <li><span className="text-slate-500">Usage type:</span> {abuse.usageType}</li>
+                          <div className="bg-slate-800/30 border border-slate-800 p-3 rounded-xl flex justify-between items-center">
+                            <span className="text-slate-500 text-xs">Usage Classification</span>
+                            <span className="text-slate-200 font-mono text-xs">{abuse.usageType}</span>
+                          </div>
                         )}
-                        {abuse.isTor !== undefined && (
-                          <li><span className="text-slate-500">Tor exit node:</span> {abuse.isTor ? 'Yes' : 'No'}</li>
-                        )}
+
                         {abuse.lastReportedAt && (
-                          <li><span className="text-slate-500">Last reported:</span> {new Date(abuse.lastReportedAt).toLocaleDateString()}</li>
+                          <div className="bg-slate-800/30 border border-slate-800 p-3 rounded-xl flex justify-between items-center">
+                            <span className="text-slate-500 text-xs">Last Reported Date</span>
+                            <span className="text-slate-200 font-mono text-xs">{new Date(abuse.lastReportedAt).toLocaleDateString()}</span>
+                          </div>
                         )}
-                      </ul>
-                    </>
+                      </div>
+                    </div>
                   )}
                 </div>
               )}
+
             </div>
-          </>
+          </div>
         )}
       </div>
     </div>
