@@ -24,20 +24,54 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = DEFAULT_TIMEOUT_M
 
 // IP Geolocation
 const getGeo = async (ip) => {
-  const res = await fetchWithTimeout(
-    `http://ip-api.com/json/${ip}?fields=status,message,country,countryCode,regionName,city,zip,lat,lon,timezone,isp,org,as,query`
-  );
-  if (!res.ok) {
-    throw new Error(`ip-api.com responded with status ${res.status}`);
+  // Primary Attempt: ip-api.com
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 8000); // 8s timeout before failover
+
+    const res = await fetch(`http://ip-api.com/json/${ip}?fields=status,message,country,regionName,city,lat,lon,isp,org,as`, {
+      signal: controller.signal
+    });
+    clearTimeout(timeoutId);
+
+    if (res.ok) {
+      const data = await res.json();
+      if (data.status === 'success') {
+        return {
+          isp: data.isp,
+          org: data.org || data.as,
+          city: data.city,
+          country: data.country,
+          lat: data.lat,
+          lon: data.lon
+        };
+      }
+    }
+  } catch (err) {
+    console.warn(`[Geo API] Primary ip-api.com failed for ${ip}, trying fallback...`);
   }
-  const data = await res.json();
-  // ip-api.com returns HTTP 200 even on failure - the real signal is
-  // data.status. The original code never checked this, so a bad/reserved
-  // IP would silently return {status:"fail", message:"..."} as if it worked.
-  if (data.status === 'fail') {
-    throw new Error(data.message || 'Geolocation lookup failed');
+
+  // Fallback Attempt: ipwho.is (Free, no key required, HTTPS support)
+  try {
+    const fallbackRes = await fetch(`https://ipwho.is/${ip}`);
+    if (fallbackRes.ok) {
+      const fbData = await fallbackRes.json();
+      if (fbData.success) {
+        return {
+          isp: fbData.connection?.isp || 'Unknown',
+          org: fbData.connection?.org || fbData.connection?.asn,
+          city: fbData.city,
+          country: fbData.country,
+          lat: fbData.latitude,
+          lon: fbData.longitude
+        };
+      }
+    }
+  } catch (err) {
+    console.error(`[Geo API] Fallback geo lookup also failed for ${ip}`);
   }
-  return data;
+
+  return { error: 'Geolocation lookup timed out across all providers.' };
 };
 
 // Shodan InternetDB
