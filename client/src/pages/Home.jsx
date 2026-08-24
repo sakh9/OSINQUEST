@@ -4,6 +4,7 @@ import { Search, ShieldAlert, Activity, MapPin, Globe, Server, AlertTriangle, Cl
 import MapView from '../components/MapView';
 import AbuseGauge from '../components/AbuseGauge';
 import ActivityChart from '../components/ActivityChart';
+import DnsRecordChart from '../components/DnsRecordChart';
 
 // Lightweight pre-flight check, purely for fast UX feedback before hitting
 // the network. This is intentionally loose - the server's classifyQuery()
@@ -359,6 +360,7 @@ export default function Home() {
                     </div>
                   ) : (
                     <div className="space-y-3 text-sm">
+                      <DnsRecordChart dnsData={dnsData} />
                       {[
                         ['A Records (IPv4)', dnsData.A],
                         ['AAAA Records (IPv6)', dnsData.AAAA],
