@@ -176,4 +176,23 @@ router.post('/', async (req, res) => {
   }
 });
 
+// GET /api/lookup/activity - daily search counts for the last 14 days,
+// powering the frontend's activity chart. Mounted on the same router at a
+// different path/method than POST '/', so there's no route conflict.
+router.get('/activity', async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT DATE_TRUNC('day', created_at) AS day, COUNT(*)::int AS count
+       FROM search_history
+       WHERE created_at > NOW() - INTERVAL '14 days'
+       GROUP BY day
+       ORDER BY day ASC`
+    );
+    res.json(rows);
+  } catch (err) {
+    console.error('Failed to fetch activity stats:', err.message);
+    res.status(500).json({ error: 'Could not load activity data.' });
+  }
+});
+
 module.exports = router;

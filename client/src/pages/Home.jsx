@@ -2,6 +2,8 @@ import { useState, useRef } from 'react';
 import axios from 'axios';
 import { Search, ShieldAlert, Activity, MapPin, Globe, Server, AlertTriangle, Clock, CheckCircle2, Info } from 'lucide-react';
 import MapView from '../components/MapView';
+import AbuseGauge from '../components/AbuseGauge';
+import ActivityChart from '../components/ActivityChart';
 
 // Lightweight pre-flight check, purely for fast UX feedback before hitting
 // the network. This is intentionally loose - the server's classifyQuery()
@@ -40,12 +42,11 @@ function SourceStatus({ error, skipped, reason }) {
   return null;
 }
 
-function abuseSeverity(score) {
-  if (score === undefined || score === null) return null;
-  if (score >= 75) return { label: 'High risk', className: 'text-red-400 border-red-900 bg-red-900/20' };
-  if (score >= 25) return { label: 'Moderate risk', className: 'text-amber-400 border-amber-900 bg-amber-900/20' };
-  return { label: 'Low risk', className: 'text-emerald-400 border-emerald-900 bg-emerald-900/20' };
-}
+// Note: the old text badge (color + "High/Moderate/Low risk" label) that
+// used to live in the Abuse Reputation card is now the AbuseGauge chart
+// instead - the 25/75 thresholds live in AbuseGauge's gaugeColor() so
+// there's one source of truth instead of two functions that could drift
+// out of sync with each other.
 
 // Synthesizes the raw geo/shodan/abuse fields into one or two plain-English
 // sentences, instead of leaving the person to read five separate cards and
@@ -53,7 +54,7 @@ function abuseSeverity(score) {
 // most OSINT aggregators dump raw data and stop there; this interprets it.
 // Returns null if there's nothing meaningful to say yet (e.g. every source
 // errored or was skipped).
-function buildRiskSummary({ geo, shodan, abuse, type }) {
+function buildRiskSummary({ geo, shodan, /* whois, */ abuse, type }) {
   const parts = [];
   const subject = type === 'domain' ? 'This domain' : 'This IP';
   let severity = 'info';
@@ -177,7 +178,6 @@ export default function Home() {
   const dnsData = data?.dns_data;
   const abuse = data?.abuse_data;
   const isReverseDns = dnsData && Array.isArray(dnsData.ptr);
-  const severity = abuseSeverity(abuse?.abuseConfidenceScore);
   const riskSummary = data ? buildRiskSummary({ geo, shodan, whois, abuse, type: data.query_type }) : null;
   const summaryStyle = riskSummary ? SUMMARY_STYLES[riskSummary.severity] : null;
 
@@ -190,6 +190,8 @@ export default function Home() {
           </h1>
           <p className="text-slate-400">IP & Domain Intelligence Aggregator</p>
         </header>
+
+        <ActivityChart />
 
         <form onSubmit={handleSearch} className="flex gap-4 mb-8">
           <input
@@ -390,25 +392,21 @@ export default function Home() {
                   {(abuse.error || abuse.skipped) ? (
                     <SourceStatus error={abuse.error} skipped={abuse.skipped} reason={abuse.reason} />
                   ) : (
-                    <ul className="space-y-2 text-sm">
-                      {severity && (
-                        <li>
-                          <span className={`inline-block border rounded px-2 py-1 text-xs font-bold ${severity.className}`}>
-                            {severity.label} · {abuse.abuseConfidenceScore}% confidence
-                          </span>
-                        </li>
-                      )}
-                      <li><span className="text-slate-500">Total reports:</span> {abuse.totalReports ?? 0}</li>
-                      {abuse.usageType && (
-                        <li><span className="text-slate-500">Usage type:</span> {abuse.usageType}</li>
-                      )}
-                      {abuse.isTor !== undefined && (
-                        <li><span className="text-slate-500">Tor exit node:</span> {abuse.isTor ? 'Yes' : 'No'}</li>
-                      )}
-                      {abuse.lastReportedAt && (
-                        <li><span className="text-slate-500">Last reported:</span> {new Date(abuse.lastReportedAt).toLocaleDateString()}</li>
-                      )}
-                    </ul>
+                    <>
+                      <AbuseGauge score={abuse.abuseConfidenceScore ?? 0} />
+                      <ul className="space-y-2 text-sm mt-2">
+                        <li><span className="text-slate-500">Total reports:</span> {abuse.totalReports ?? 0}</li>
+                        {abuse.usageType && (
+                          <li><span className="text-slate-500">Usage type:</span> {abuse.usageType}</li>
+                        )}
+                        {abuse.isTor !== undefined && (
+                          <li><span className="text-slate-500">Tor exit node:</span> {abuse.isTor ? 'Yes' : 'No'}</li>
+                        )}
+                        {abuse.lastReportedAt && (
+                          <li><span className="text-slate-500">Last reported:</span> {new Date(abuse.lastReportedAt).toLocaleDateString()}</li>
+                        )}
+                      </ul>
+                    </>
                   )}
                 </div>
               )}
