@@ -22,18 +22,18 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = DEFAULT_TIMEOUT_M
   }
 }
 
-// IP Geolocation
+// IP Geolocation - tries ip-api.com first, falls back to ipwho.is if the
+// primary is down, rate-limited, or times out. Both calls go through the
+// shared fetchWithTimeout() helper so neither one can hang the request
+// indefinitely - a bug in an earlier version of this function gave the
+// fallback call no timeout at all, meaning a hung ipwho.is response could
+// stall the entire /api/lookup request forever, regardless of how fast
+// every other data source responded.
 const getGeo = async (ip) => {
-  // Primary Attempt: ip-api.com
   try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 8000); // 8s timeout before failover
-
-    const res = await fetch(`http://ip-api.com/json/${ip}?fields=status,message,country,regionName,city,lat,lon,isp,org,as`, {
-      signal: controller.signal
-    });
-    clearTimeout(timeoutId);
-
+    const res = await fetchWithTimeout(
+      `http://ip-api.com/json/${ip}?fields=status,message,country,regionName,city,lat,lon,isp,org,as`
+    );
     if (res.ok) {
       const data = await res.json();
       if (data.status === 'success') {
@@ -43,17 +43,17 @@ const getGeo = async (ip) => {
           city: data.city,
           country: data.country,
           lat: data.lat,
-          lon: data.lon
+          lon: data.lon,
         };
       }
     }
   } catch (err) {
-    console.warn(`[Geo API] Primary ip-api.com failed for ${ip}, trying fallback...`);
+    console.warn(`[Geo API] Primary ip-api.com failed for ${ip}: ${err.message}. Trying fallback...`);
   }
 
   // Fallback Attempt: ipwho.is (Free, no key required, HTTPS support)
   try {
-    const fallbackRes = await fetch(`https://ipwho.is/${ip}`);
+    const fallbackRes = await fetchWithTimeout(`https://ipwho.is/${ip}`);
     if (fallbackRes.ok) {
       const fbData = await fallbackRes.json();
       if (fbData.success) {
@@ -68,10 +68,15 @@ const getGeo = async (ip) => {
       }
     }
   } catch (err) {
-    console.error(`[Geo API] Fallback geo lookup also failed for ${ip}`);
+    console.error(`[Geo API] Fallback geo lookup also failed for ${ip}: ${err.message}`);
   }
 
-  return { error: 'Geolocation lookup timed out across all providers.' };
+  // Throwing here (rather than returning { error: ... } as a normal value)
+  // matches every other function in this file: it lets unwrap() in lookup.js
+  // apply the same consistent "X lookup failed: ..." labeling to every
+  // source, instead of geo being the one field with a differently-shaped
+  // failure object the frontend has to special-case.
+  throw new Error('all providers unavailable (ip-api.com and ipwho.is)');
 };
 
 // Shodan InternetDB
