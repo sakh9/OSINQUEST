@@ -1,10 +1,15 @@
 import { useState, useRef } from 'react';
 import axios from 'axios';
-import { Search, ShieldAlert, Activity, MapPin, Globe, Server, AlertTriangle, Clock, CheckCircle2, Info, Terminal, /*Cpu,*/ Database, Zap } from 'lucide-react';
+import { Search, ShieldAlert, Activity, MapPin, Globe, Server, AlertTriangle, Clock, CheckCircle2, Info, Copy, Download, Check, History, Sparkles, Terminal, Database, Zap} from 'lucide-react';
 import MapView from '../components/MapView';
 import AbuseGauge from '../components/AbuseGauge';
 import ActivityChart from '../components/ActivityChart';
 import DnsRecordChart from '../components/DnsRecordChart';
+import SearchChips from '../components/SearchChips';
+import TotalLookupsCounter from '../components/TotalLookupsCounter';
+import { useRecentSearches } from '../hooks/useRecentSearches';
+
+const EXAMPLE_QUERIES = ['8.8.8.8', '1.1.1.1', 'github.com', 'cloudflare.com'];
 
 function looksLikeIpOrDomain(value) {
   const ipv4 = /^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/;
@@ -16,7 +21,7 @@ function looksLikeIpOrDomain(value) {
 function SourceStatus({ error, skipped, reason }) {
   if (error) {
     return (
-      <div className="flex items-center gap-2 text-amber-400 text-xs bg-amber-950/20 border border-amber-900/40 rounded-lg p-3 font-sans">
+      <div className="flex items-center gap-2 text-amber-400 text-xs bg-amber-950/20 border border-amber-900/40 rounded-xl p-3 font-sans backdrop-blur-sm">
         <AlertTriangle size={15} className="shrink-0 text-amber-400" />
         <span>{error}</span>
       </div>
@@ -24,7 +29,7 @@ function SourceStatus({ error, skipped, reason }) {
   }
   if (skipped) {
     return (
-      <div className="flex items-center gap-2 text-slate-400 text-xs bg-slate-900/60 border border-slate-800 rounded-lg p-3 font-sans">
+      <div className="flex items-center gap-2 text-slate-400 text-xs bg-slate-900/60 border border-slate-800 rounded-xl p-3 font-sans">
         <Clock size={15} className="shrink-0 text-slate-500" />
         <span>{reason || 'Skipped'}</span>
       </div>
@@ -101,13 +106,15 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
+  const [copied, setCopied] = useState(false);
   const abortRef = useRef(null);
+  const { recent, addSearch } = useRecentSearches();
 
-  const handleSearch = async (e) => {
-    e.preventDefault();
+  const handleSearch = async (e, overrideQuery) => {
+    e?.preventDefault();
     if (loading) return;
 
-    const trimmedInput = input.trim();
+    const trimmedInput = (overrideQuery ?? input).trim();
     if (!trimmedInput) {
       return setError('Please enter an IP address or domain name.');
     }
@@ -131,6 +138,7 @@ export default function Home() {
         { signal: controller.signal, timeout: 30000 }
       );
       setData(response.data);
+      addSearch(trimmedInput);
     } catch (err) {
       if (axios.isCancel(err) || err.code === 'ERR_CANCELED') return;
       console.error('API Error:', err);
@@ -142,6 +150,33 @@ export default function Home() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleChipSelect = (value) => {
+    setInput(value);
+    handleSearch(undefined, value);
+  };
+
+  const handleCopyJson = async () => {
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(data, null, 2));
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error('Copy to clipboard failed:', err);
+    }
+  };
+
+  const handleDownloadJson = () => {
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${data.query}-lookup.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   };
 
   const geo = data?.geo_data;
@@ -158,31 +193,34 @@ export default function Home() {
       <div className="max-w-6xl mx-auto space-y-8">
         
         {/* Command Center Header */}
-        <header className="flex flex-col sm:flex-row items-center justify-between border-b border-slate-800/80 pb-6 gap-4">
+        <header className="flex flex-col md:flex-row items-center justify-between border-b border-slate-800/80 pb-6 gap-4">
           <div className="flex items-center gap-3">
-            <div className="p-3 rounded-xl bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 shadow-[0_0_20px_rgba(6,182,212,0.15)]">
-              <ShieldAlert size={28} />
+            <div className="p-3 rounded-2xl bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 shadow-[0_0_20px_rgba(6,182,212,0.15)]">
+              <ShieldAlert size={32} />
             </div>
             <div>
-              <h1 className="text-2xl sm:text-3xl font-black text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 via-teal-300 to-emerald-400 tracking-wider">
+              <h1 className="text-3xl font-black text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 via-teal-300 to-emerald-400 tracking-wider">
                 OSINT NEXUS
               </h1>
-              <p className="text-xs text-slate-400 font-sans">Threat Intelligence & Recon Operations</p>
+              <p className="text-xs text-slate-400 font-sans">IP & Domain Intelligence Aggregator</p>
             </div>
           </div>
 
-          <div className="flex items-center gap-2 text-xs font-sans text-slate-400 bg-slate-900/80 border border-slate-800 px-3 py-1.5 rounded-full">
-            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-            <span>SYSTEM ACTIVE</span>
+          <div className="flex flex-col sm:flex-row items-center gap-3">
+            <TotalLookupsCounter />
+            <div className="flex items-center gap-2 text-xs font-sans text-slate-400 bg-slate-900/80 border border-slate-800 px-3 py-1.5 rounded-full">
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+              <span>LIVE RECON ENGINE</span>
+            </div>
           </div>
         </header>
 
-        {/* Global Activity Analytics Section */}
+        {/* Activity Analytics Panel */}
         <div className="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-4 sm:p-6 backdrop-blur-md">
           <ActivityChart />
         </div>
 
-        {/* Tactical Search Form */}
+        {/* Tactical Search Console */}
         <div className="relative max-w-3xl mx-auto">
           <form onSubmit={handleSearch} className="relative flex items-center">
             <div className="absolute left-4 text-cyan-500/70">
@@ -214,6 +252,7 @@ export default function Home() {
           </form>
         </div>
 
+        {/* Status & Loading Banners */}
         {loading && (
           <div className="flex items-center justify-center gap-2 text-slate-400 text-xs sm:text-sm font-sans bg-slate-900/40 border border-slate-800 rounded-xl p-4 max-w-2xl mx-auto">
             <Activity className="animate-spin text-cyan-400 shrink-0" size={16} />
@@ -228,25 +267,56 @@ export default function Home() {
           </div>
         )}
 
-        {/* Search Results Display */}
+        {/* Default Chips Container */}
+        {!data && !loading && (
+          <div className="space-y-4 max-w-3xl mx-auto bg-slate-900/30 border border-slate-800/60 p-5 rounded-2xl backdrop-blur-sm">
+            <SearchChips title="Recent Lookups" icon={History} items={recent} onSelect={handleChipSelect} />
+            <SearchChips title="Suggested Targets" icon={Sparkles} items={EXAMPLE_QUERIES} onSelect={handleChipSelect} />
+          </div>
+        )}
+
+        {/* Intel Results Container */}
         {data && !loading && (
           <div className="space-y-6">
             
-            {/* Intel Target Banner */}
-            <div className="flex flex-wrap items-center justify-between gap-3 text-xs border-b border-slate-800/80 pb-3 font-sans">
+            {/* Intel Header Meta Bar */}
+            <div className="flex flex-wrap items-center justify-between gap-3 text-xs border-b border-slate-800/80 pb-4 font-sans">
               <div className="flex items-center gap-2">
                 <span className="text-slate-500">TARGET:</span>
-                <span className="text-slate-100 font-mono font-bold text-sm bg-slate-900 px-2 py-0.5 rounded border border-slate-800">{data.query}</span>
-                <span className="uppercase bg-cyan-950/50 text-cyan-300 border border-cyan-800/50 rounded px-2 py-0.5 text-[10px] font-bold tracking-widest">
+                <span className="text-slate-100 font-mono font-bold text-sm bg-slate-900 px-2.5 py-1 rounded-lg border border-slate-800">{data.query}</span>
+                <span className="uppercase bg-cyan-950/50 text-cyan-300 border border-cyan-800/50 rounded-md px-2 py-0.5 text-[10px] font-bold tracking-widest">
                   {data.query_type}
                 </span>
               </div>
-              {data.cached && (
-                <div className="flex items-center gap-1.5 text-slate-400 bg-slate-900 border border-slate-800 px-2.5 py-1 rounded-full text-[11px]">
-                  <Database size={12} className="text-teal-400" />
-                  <span>Cached Result</span>
-                </div>
-              )}
+
+              <div className="flex items-center gap-2">
+                {data.cached && (
+                  <div className="flex items-center gap-1.5 text-slate-400 bg-slate-900 border border-slate-800 px-2.5 py-1 rounded-lg text-[11px]">
+                    <Database size={12} className="text-teal-400" />
+                    <span>From Cache</span>
+                  </div>
+                )}
+                <button
+                  type="button"
+                  onClick={handleCopyJson}
+                  aria-label="Copy result as JSON"
+                  title="Copy result as JSON"
+                  className="flex items-center gap-1.5 text-xs bg-slate-900 border border-slate-800 hover:border-cyan-500 hover:text-cyan-400 text-slate-300 rounded-lg px-3 py-1 transition-all cursor-pointer"
+                >
+                  {copied ? <Check size={12} className="text-emerald-400" /> : <Copy size={12} />}
+                  <span>{copied ? 'Copied' : 'Copy JSON'}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDownloadJson}
+                  aria-label="Download result as JSON"
+                  title="Download result as JSON"
+                  className="flex items-center gap-1.5 text-xs bg-slate-900 border border-slate-800 hover:border-cyan-500 hover:text-cyan-400 text-slate-300 rounded-lg px-3 py-1 transition-all cursor-pointer"
+                >
+                  <Download size={12} />
+                  <span>Download</span>
+                </button>
+              </div>
             </div>
 
             {/* Synthesized Risk Summary Banner */}
@@ -257,7 +327,7 @@ export default function Home() {
               </div>
             )}
 
-            {/* Bento Grid layout */}
+            {/* Main Bento Cards Grid */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               
               {/* Geolocation Card */}
@@ -311,7 +381,7 @@ export default function Home() {
                 </div>
               )}
 
-              {/* WHOIS / RDAP Card */}
+              {/* WHOIS Card */}
               {whois && (
                 <div className="bg-slate-900/40 border border-slate-800/80 p-6 rounded-2xl backdrop-blur-md shadow-xl">
                   <h2 className="text-lg font-bold text-cyan-400 border-b border-slate-800/80 pb-3 mb-4 flex items-center gap-2">
@@ -402,7 +472,7 @@ export default function Home() {
               {abuse && (
                 <div className="bg-slate-900/40 border border-slate-800/80 p-6 rounded-2xl backdrop-blur-md shadow-xl md:col-span-2">
                   <h2 className="text-lg font-bold text-cyan-400 border-b border-slate-800/80 pb-3 mb-4 flex items-center gap-2">
-                    <ShieldAlert size={18} /> Abuse & Threat Confidence
+                    <ShieldAlert size={18} /> Threat Intelligence & Abuse Score
                   </h2>
                   {(abuse.error || abuse.skipped) ? (
                     <SourceStatus error={abuse.error} skipped={abuse.skipped} reason={abuse.reason} />
@@ -433,7 +503,7 @@ export default function Home() {
 
                         {abuse.lastReportedAt && (
                           <div className="bg-slate-800/30 border border-slate-800 p-3 rounded-xl flex justify-between items-center">
-                            <span className="text-slate-500 text-xs">Last Reported Date</span>
+                            <span className="text-slate-500 text-xs font-sans">Last Reported Date</span>
                             <span className="text-slate-200 font-mono text-xs">{new Date(abuse.lastReportedAt).toLocaleDateString()}</span>
                           </div>
                         )}

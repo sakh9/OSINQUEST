@@ -195,4 +195,18 @@ router.get('/activity', async (req, res) => {
   }
 });
 
+// GET /api/lookup/stats - all-time total search count, powering the
+// "N lookups performed" counter on the frontend. Counts every request
+// logged in search_history (including cache hits), not just unique
+// cached entries in `lookups` - a more honest reflection of actual usage.
+router.get('/stats', async (req, res) => {
+  try {
+    const { rows } = await pool.query(`SELECT COUNT(*)::int AS total FROM search_history`);
+    res.json({ totalLookups: rows[0]?.total ?? 0 });
+  } catch (err) {
+    console.error('Failed to fetch lookup stats:', err.message);
+    res.status(500).json({ error: 'Could not load stats.' });
+  }
+});
+
 module.exports = router;
