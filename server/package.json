@@ -9,6 +9,11 @@
     "test": "jest --runInBand --detectOpenHandles",
     "test:coverage": "jest --coverage"
   },
+  "jest": {
+    "testMatch": [
+      "**/tests/**/*.test.js"
+    ]
+  },
   "keywords": [],
   "author": "",
   "license": "ISC",

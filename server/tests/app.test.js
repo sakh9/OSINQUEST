@@ -3,11 +3,11 @@ const request = require('supertest');
 // app.js pulls in the lookup router, which pulls in the DB pool and
 // services - mocked here too so these tests never touch a real DB or
 // network, even though none of these specific tests exercise those routes.
-jest.mock('./src/db/pool', () => ({ query: jest.fn(), end: jest.fn() }));
-jest.mock('./src/services/apis', () => ({ getGeo: jest.fn(), getShodan: jest.fn(), getWhois: jest.fn(), getDns: jest.fn() }));
-jest.mock('./src/services/abuse', () => ({ getAbuse: jest.fn() }));
+jest.mock('../src/db/pool', () => ({ query: jest.fn(), end: jest.fn() }));
+jest.mock('../src/services/apis', () => ({ getGeo: jest.fn(), getShodan: jest.fn(), getWhois: jest.fn(), getDns: jest.fn() }));
+jest.mock('../src/services/abuse', () => ({ getAbuse: jest.fn() }));
 
-const createApp = require('./app');
+const createApp = require('../src/app');
 
 describe('health check', () => {
   test('GET /health returns ok', async () => {
