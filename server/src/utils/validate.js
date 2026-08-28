@@ -43,15 +43,42 @@ function isPrivateOrReservedIp(ip) {
 }
 
 /**
- * Normalizes raw user input: strips protocol/path, lowercases, trims.
+ * Normalizes raw user input: strips protocol/path, lowercases, trims, and
+ * strips a trailing :port suffix - carefully.
+ *
+ * The naive version of this (a blind `.replace(/:\d+$/, '')`) silently
+ * mangled almost every real IPv6 address: "2001:db8::1" ends in ":1",
+ * which looks exactly like a "host:port" suffix, so it got truncated to
+ * "2001:db8:" - an invalid address that then failed classification for
+ * the wrong reason. A bare IPv6 address always has 2+ colons (that's
+ * what distinguishes it from "host:port" or "1.2.3.4:port", which have
+ * at most one), so port-stripping is now skipped whenever that's the
+ * case. Bracketed IPv6-with-port ("[::1]:8080"), the standard unambiguous
+ * notation for this, is still handled explicitly.
  */
 function normalizeInput(raw) {
-  return raw
+  let value = raw
     .trim()
     .toLowerCase()
     .replace(/^https?:\/\//, '')
-    .replace(/\/.*$/, '')
-    .replace(/:\d+$/, ''); // strip a trailing :port if someone pastes host:port
+    .replace(/\/.*$/, '');
+
+  // Bracketed IPv6, optionally with a port: "[::1]" or "[::1]:8080".
+  const bracketMatch = value.match(/^\[([0-9a-f:]+)\](?::\d+)?$/);
+  if (bracketMatch) {
+    return bracketMatch[1];
+  }
+
+  // Only strip a trailing :port when there's at most one colon - i.e.
+  // "example.com:8080" or "1.2.3.4:8080". 2+ colons means this is a bare
+  // IPv6 address, where a trailing ":1234" is part of the address itself,
+  // not a port suffix.
+  const colonCount = (value.match(/:/g) || []).length;
+  if (colonCount <= 1) {
+    value = value.replace(/:\d+$/, '');
+  }
+
+  return value;
 }
 
 /**
