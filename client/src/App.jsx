@@ -1,8 +1,13 @@
 import Home from './pages/Home';
+import { Analytics } from "@vercel/analytics/next"
 
 function App() {
   return (
-    <Home />
+    <div>
+      <Home />
+      {/* Vercel Web Analytics tracking component */}
+      <Analytics />
+    </div>
   );
 }
 
