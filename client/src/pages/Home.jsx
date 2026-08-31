@@ -200,7 +200,7 @@ export default function Home() {
             </div>
             <div>
               <h1 className="text-3xl font-black text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 via-teal-300 to-emerald-400 tracking-wider">
-                OSINT NEXUS
+                OSINQUEST
               </h1>
               <p className="text-xs text-slate-400 font-sans">IP & Domain Intelligence Aggregator</p>
             </div>
