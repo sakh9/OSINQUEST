@@ -9,6 +9,11 @@ if (!process.env.DATABASE_URL) {
   process.exit(1);
 }
 
+// Health check endpoint
+app.get('/health', (req, res) => {
+  res.status(200).json({ status: 'ok' });
+});
+
 const app = createApp();
 const PORT = process.env.PORT || 5000;
 
