@@ -81,8 +81,8 @@ export default function MapView({ lat, lon, city, country, isp, zoom = 10 }) {
         className="h-full w-full"
       >
         <TileLayer
-          attribution='&copy; <a href="https://carto.com/">CartoDB</a>'
-          url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+        attribution='&copy; <a href="https://carto.com/">CartoDB</a> &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+        url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png?key=cb1_2uwh_1_ebd4b19641d67f168965f97a"
         />
         <Marker position={[latNum, lonNum]}>
           <Popup>
