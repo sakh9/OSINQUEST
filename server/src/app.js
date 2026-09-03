@@ -54,9 +54,15 @@ function createApp() {
   // Rate limiting: protects this server AND the free-tier third-party APIs
   // it proxies to. standardHeaders uses the modern RateLimit-* response
   // headers instead of the deprecated X-RateLimit-* ones.
+  //
+  // Configurable via env vars, defaulting to the same production-safe
+  // values as before - this exists specifically so a load test can
+  // temporarily raise the limit via Railway's dashboard (no code change,
+  // no redeploy of different code) to measure real throughput, then be
+  // reverted, without ever touching this file for that purpose.
   const limiter = rateLimit({
-    windowMs: 15 * 60 * 1000,
-    max: 30,
+    windowMs: Number(process.env.RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000,
+    max: Number(process.env.RATE_LIMIT_MAX) || 30,
     standardHeaders: true,
     legacyHeaders: false,
     message: { error: 'Too many requests. Please try again later.' },
