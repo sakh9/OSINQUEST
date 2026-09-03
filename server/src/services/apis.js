@@ -102,30 +102,65 @@ const getShodan = async (ip) => {
 const getWhois = async (query) => {
   const url = isIp(query) ? `https://rdap.org/ip/${query}` : `https://rdap.org/domain/${query}`;
 
-  const res = await fetchWithTimeout(url, { redirect: 'follow' });
-
-  if (res.status === 404) {
-    return { status: ['No RDAP record found'], handle: query };
-  }
-  if (!res.ok) {
-    throw new Error(`RDAP lookup responded with status ${res.status}`);
-  }
-
-  const data = await res.json();
-
-  // Domain RDAP responses use `ldhName`; IP/network RDAP responses use
-  // `name` + `startAddress`/`endAddress`/`country` instead. Normalizing
-  // both shapes here means the frontend never has to branch on query type.
-  return {
-    name: data.ldhName || data.name || query,
-    handle: data.handle || 'N/A',
-    startAddress: data.startAddress || null,
-    endAddress: data.endAddress || null,
-    country: data.country || null,
-    status: data.status || [],
-    events: (data.events || []).map((e) => ({ action: e.eventAction, date: e.eventDate })),
-    nameservers: (data.nameservers || []).map((ns) => ns.ldhName).filter(Boolean),
+  const customHeaders = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) OSINQUEST-OSINT-Engine/1.0',
+    'Accept': 'application/rdap+json, application/json',
   };
+
+  try {
+    const res = await fetchWithTimeout(url, {
+      redirect: 'follow',
+      headers: customHeaders,
+    });
+
+    if (res.status === 404) {
+      return { status: ['No RDAP record found'], handle: query };
+    }
+
+    if (res.ok) {
+      const data = await res.json();
+      return {
+        name: data.ldhName || data.name || query,
+        handle: data.handle || 'N/A',
+        startAddress: data.startAddress || null,
+        endAddress: data.endAddress || null,
+        country: data.country || null,
+        status: data.status || [],
+        events: (data.events || []).map((e) => ({ action: e.eventAction, date: e.eventDate })),
+        nameservers: (data.nameservers || []).map((ns) => ns.ldhName).filter(Boolean),
+      };
+    }
+    
+    console.warn(`[RDAP WHOIS] Primary RDAP returned status ${res.status} for ${query}. Attempting fallback...`);
+  } catch (err) {
+    console.warn(`[RDAP WHOIS] Primary RDAP failed for ${query}: ${err.message}. Trying fallback...`);
+  }
+
+  // Fallback Attempt: ipwho.is for IP queries if RDAP.org returned 403/Forbidden
+  if (isIp(query)) {
+    try {
+      const fallbackRes = await fetchWithTimeout(`https://ipwho.is/${query}`);
+      if (fallbackRes.ok) {
+        const fbData = await fallbackRes.json();
+        if (fbData.success) {
+          return {
+            name: fbData.connection?.org || fbData.connection?.isp || query,
+            handle: fbData.connection?.asn ? `AS${fbData.connection.asn}` : 'N/A',
+            startAddress: fbData.ip,
+            endAddress: fbData.ip,
+            country: fbData.country,
+            status: ['active (fallback)'],
+            events: [],
+            nameservers: [],
+          };
+        }
+      }
+    } catch (fbErr) {
+      console.error(`[RDAP WHOIS] Fallback query failed for ${query}: ${fbErr.message}`);
+    }
+  }
+
+  throw new Error('RDAP WHOIS lookup failed or access was forbidden (403)');
 };
 
 // DNS Records - added AAAA/CNAME for parity with what a real DNS toolkit
